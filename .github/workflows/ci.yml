@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── 1. dbt compile (SQL validation, no BigQuery access needed) ─────────
+  dbt-compile:
+    name: dbt compile (dry-run)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dbt
+        run: pip install dbt-bigquery==1.8.* --quiet
+
+      - name: dbt deps
+        run: dbt deps
+
+      - name: dbt compile
+        # Uses the CI profile (no real credentials — compile only validates SQL syntax + Jinja)
+        env:
+          GCP_PROJECT: ci-dry-run
+          BQ_DATASET:  ops_analytics_ci
+        run: dbt compile --target ci --no-partial-parse
+
+  # ── 2. SQL linting ─────────────────────────────────────────────────────
+  sqlfluff:
+    name: SQLFluff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff sqlfluff-templater-dbt --quiet
+
+      - name: Lint SQL
+        run: |
+          sqlfluff lint dbt/models/ \
+            --dialect bigquery \
+            --templater dbt \
+            --exclude-rules L016 \
+            --ignore-local-config
+
+  # ── 3. Python tests ────────────────────────────────────────────────────
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt --quiet
+
+      - name: Add repo root to PYTHONPATH
+        run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+
+      - name: Run pytest
+        run: pytest tests/ -v --tb=short --color=yes
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff --quiet
+          ruff check analytics/ ingestion/ dags/ tests/ \
+            --select E,F,W --ignore E501

@@ -1,0 +1,27 @@
+# Core analytics
+numpy>=1.26
+pandas>=2.2
+scipy>=1.13
+
+# BigQuery
+google-cloud-bigquery>=3.20
+db-dtypes>=1.2
+
+# dbt (installed separately in CI via dbt-bigquery)
+# dbt-bigquery==1.8.*
+
+# Airflow (installed by Cloud Composer — listed here for local dev)
+apache-airflow>=2.9; python_version >= "3.11"
+apache-airflow-providers-google>=10.0; python_version >= "3.11"
+
+# Ingestion
+apache-beam[gcp]>=2.56
+
+# Testing
+pytest>=8.0
+pytest-mock>=3.14
+
+# Linting
+ruff>=0.4
+sqlfluff>=3.0
+sqlfluff-templater-dbt>=3.0

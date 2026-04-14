@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: fleet_readiness_daily
+    description: >
+      Daily fleet readiness mart. Powers the Fleet Health Looker dashboard.
+      Grain: cluster_name × environment × event_date.
+    columns:
+      - name: fleet_health_score
+        description: Weighted composite score (0–100). Availability 50%, Latency 30%, Error Rate 20%.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: slo_compliance_rate
+        description: Fraction of hours where fleet_health_score >= 95 (SLO threshold).
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: anomaly_count
+        description: Count of anomaly events detected in the day.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+  - name: flight_ops_summary
+    description: >
+      Daily flight operations summary. Grain: route_code × airline × event_date.
+    columns:
+      - name: otp_rate
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: cancellation_rate
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+
+  - name: infra_cost_by_team
+    description: >
+      Daily infrastructure cost allocation by team/environment/category.
+    columns:
+      - name: total_cost_usd
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+  - name: anomaly_log
+    description: Persisted anomaly event log. Grain: cluster × environment × event_hour.
+    columns:
+      - name: anomaly_severity
+        tests:
+          - accepted_values:
+              values: [low, medium, high, critical]
+
+  - name: ops_kpi_dashboard
+    description: Denormalised daily KPI rollup powering the executive dashboard.
+    columns:
+      - name: fleet_health_score
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100

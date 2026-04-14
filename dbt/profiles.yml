@@ -1,0 +1,39 @@
+# BigQuery connection profiles.
+# In CI: uses GOOGLE_APPLICATION_CREDENTIALS env var (service account JSON).
+# Locally: uses `gcloud auth application-default login`.
+bigquery_ops:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth               # local development
+      project: "{{ env_var('GCP_PROJECT') }}"
+      dataset: "{{ env_var('BQ_DATASET', 'ops_analytics_dev') }}"
+      location: EU
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive
+      retries: 1
+
+    prod:
+      type: bigquery
+      method: service-account    # CI / Cloud Composer
+      project: "{{ env_var('GCP_PROJECT') }}"
+      dataset: "{{ env_var('BQ_DATASET', 'ops_analytics') }}"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      location: EU
+      threads: 8
+      timeout_seconds: 600
+      priority: batch
+      retries: 3
+
+    ci:
+      type: bigquery
+      method: service-account
+      project: "{{ env_var('GCP_PROJECT', 'ci-dry-run') }}"
+      dataset: "ops_analytics_ci"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS', '/dev/null') }}"
+      location: EU
+      threads: 1
+      timeout_seconds: 60
+      retries: 0
