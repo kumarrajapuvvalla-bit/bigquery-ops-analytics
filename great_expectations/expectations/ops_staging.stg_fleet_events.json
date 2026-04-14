@@ -1,0 +1,84 @@
+{
+  "expectation_suite_name": "ops_staging.stg_fleet_events",
+  "meta": {
+    "created_by": "platform-data-team",
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "description": "Data quality suite for staged fleet events. Validates schema, value sets, uniqueness, and statistical bounds.",
+    "ge_cloud_id": null
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_to_exist",
+      "kwargs": {"column": "event_key"},
+      "meta": {"notes": "Deterministic surrogate key required for deduplication"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "event_key", "mostly": 1.0}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {"column": "event_key"},
+      "meta": {"notes": "Duplicate event_key indicates upstream idempotency failure"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "event_timestamp", "mostly": 1.0}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "service_name", "mostly": 0.99}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "event_type",
+        "value_set": ["DEPLOY", "SCALE", "INCIDENT", "ALERT", "HEAL", "ROLLBACK"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "severity",
+        "value_set": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "environment",
+        "value_set": ["dev", "staging", "prod"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "error_budget_burn",
+        "min_value": 0.0,
+        "max_value": 100.0,
+        "mostly": 0.99
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "duration_ms",
+        "min_value": 0,
+        "max_value": 86400000,
+        "mostly": 0.99
+      }
+    },
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {"min_value": 100, "max_value": 10000000}
+    },
+    {
+      "expectation_type": "expect_column_proportion_of_unique_values_to_be_between",
+      "kwargs": {"column": "event_id", "min_value": 0.99}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_strftime_format",
+      "kwargs": {"column": "event_date", "strftime_format": "%Y-%m-%d"}
+    }
+  ]
+}

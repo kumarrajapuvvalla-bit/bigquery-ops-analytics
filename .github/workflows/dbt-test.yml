@@ -1,0 +1,57 @@
+name: dbt Test (PR)
+
+on:
+  pull_request:
+    paths:
+      - "dbt/**"
+      - "sql/**"
+
+concurrency:
+  group: dbt-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dbt-pr:
+    name: dbt compile + test
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa-key.json
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dbt
+        run: pip install dbt-bigquery==1.8.0
+
+      - name: Write GCP SA key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > /tmp/sa-key.json
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt compile
+        working-directory: dbt
+        run: dbt compile --target ci
+
+      - name: dbt test (schema + custom)
+        working-directory: dbt
+        run: dbt test --target ci --store-failures
+
+      - name: dbt docs generate
+        working-directory: dbt
+        run: dbt docs generate --target ci
+
+      - name: Upload dbt docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs-pr-${{ github.event.pull_request.number }}
+          path: dbt/target/
+          retention-days: 3

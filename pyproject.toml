@@ -5,31 +5,47 @@ build-backend = "setuptools.backends.legacy:build"
 [project]
 name = "bigquery-ops-analytics"
 version = "1.0.0"
-description = "BigQuery SQL analytics layer for fleet and operational data"
+description = "BigQuery analytics layer for fleet and operational data"
 requires-python = ">=3.11"
 readme = "README.md"
-license = {text = "MIT"}
-authors = [
-    {name = "Kumar Raja Puvvalla", email = "kumarrajapuvvalla@gmail.com"}
+license = { text = "MIT" }
+
+dependencies = [
+    "dbt-bigquery>=1.8.0,<1.9",
+    "apache-airflow>=2.9.0",
+    "apache-airflow-providers-google>=10.0.0",
+    "great-expectations>=0.18.0,<0.19",
+    "google-cloud-bigquery>=3.11.0",
+    "google-cloud-bigquery-storage>=2.22.0",
+    "sqlfluff>=3.3.0",
+    "sqlfluff-templater-dbt>=3.3.0",
+    "pandas>=2.1.0",
+    "pyarrow>=14.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "pydantic>=2.5.0",
 ]
-keywords = ["bigquery", "dbt", "airflow", "analytics", "devops", "platform-engineering"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+    "mypy>=1.8.0",
+    "types-requests",
+]
 
 [tool.ruff]
-line-length = 120
+line-length = 100
+target-version = "py311"
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
-exclude = ["target", ".venv", "dbt_packages"]
-
-[tool.ruff.per-file-ignores]
-"tests/*" = ["S101"]
-
-[tool.pytest.ini_options]
-testpaths  = ["tests"]
-addopts    = "-v --tb=short"
-log_cli    = true
-log_level  = "INFO"
 
 [tool.mypy]
-python_version     = "3.12"
+python_version = "3.11"
 ignore_missing_imports = true
-strict             = false
+strict = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short --color=yes"

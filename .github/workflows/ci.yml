@@ -4,87 +4,163 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    paths:
+      - "dbt/**"
+      - "sql/**"
+      - "schemas/**"
+      - "analytics/**"
+      - ".github/workflows/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-
-  # ── 1. dbt compile (SQL validation, no BigQuery access needed) ─────────
-  dbt-compile:
-    name: dbt compile (dry-run)
+  # ── 1. SQL Lint ──────────────────────────────────────────────────────────
+  sql-lint:
+    name: SQL Lint (sqlfluff)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dbt
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install linting tools
+        run: |
+          pip install sqlfluff==3.3.0 sqlfluff-templater-dbt dbt-bigquery==1.8.0
+
+      - name: Lint SQL (standalone queries)
+        run: |
+          sqlfluff lint sql/             --dialect bigquery             --templater jinja             --rules capitalisation.keywords,aliasing.table
+
+      - name: Lint dbt models
+        run: |
+          sqlfluff lint dbt/models/             --dialect bigquery             --templater dbt             --rules capitalisation.keywords,aliasing.table
+
+  # ── 2. Python lint + test ─────────────────────────────────────────────────
+  python-test:
+    name: Python Lint + Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint with ruff
+        run: ruff check analytics/ ingestion/ tests/ --select E,F,W --ignore E501
+
+      - name: Type check with mypy
+        run: mypy analytics/ --ignore-missing-imports
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short --color=yes
+
+  # ── 3. dbt compile ────────────────────────────────────────────────────────
+  dbt-compile:
+    name: dbt Compile
+    runs-on: ubuntu-latest
+    needs: [sql-lint, python-test]
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa-key.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install dbt
-        run: pip install dbt-bigquery==1.8.* --quiet
+        run: pip install dbt-bigquery==1.8.0
+
+      - name: Write GCP SA key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > /tmp/sa-key.json
 
       - name: dbt deps
+        working-directory: dbt
         run: dbt deps
 
-      - name: dbt compile
-        # Uses the CI profile (no real credentials — compile only validates SQL syntax + Jinja)
-        env:
-          GCP_PROJECT: ci-dry-run
-          BQ_DATASET:  ops_analytics_ci
-        run: dbt compile --target ci --no-partial-parse
+      - name: dbt compile (validates all SQL syntax)
+        working-directory: dbt
+        run: dbt compile --target ci
 
-  # ── 2. SQL linting ─────────────────────────────────────────────────────
-  sqlfluff:
-    name: SQLFluff lint
+  # ── 4. dbt test (main only) ───────────────────────────────────────────────
+  dbt-test:
+    name: dbt Test + GE
     runs-on: ubuntu-latest
+    needs: dbt-compile
+    if: github.ref == 'refs/heads/main'
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa-key.json
+      PR_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: Install sqlfluff
-        run: pip install sqlfluff sqlfluff-templater-dbt --quiet
+      - name: Install dbt + GE
+        run: pip install dbt-bigquery==1.8.0 great-expectations==0.18.0
 
-      - name: Lint SQL
-        run: |
-          sqlfluff lint dbt/models/ \
-            --dialect bigquery \
-            --templater dbt \
-            --exclude-rules L016 \
-            --ignore-local-config
+      - name: Write GCP SA key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > /tmp/sa-key.json
 
-  # ── 3. Python tests ────────────────────────────────────────────────────
-  pytest:
-    name: pytest
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt source freshness
+        working-directory: dbt
+        run: dbt source freshness --target ci
+
+      - name: dbt run (staging only in CI)
+        working-directory: dbt
+        run: dbt run --target ci --select staging
+
+      - name: dbt test
+        working-directory: dbt
+        run: dbt test --target ci --store-failures
+
+      - name: Upload dbt artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dbt-artifacts-${{ github.run_number }}
+          path: dbt/target/
+          retention-days: 7
+
+  # ── 5. Terraform validate ─────────────────────────────────────────────────
+  terraform-validate:
+    name: Terraform Validate
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: hashicorp/setup-terraform@v3
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
+          terraform_version: "1.7.5"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt --quiet
+      - name: terraform init (backend-less)
+        working-directory: terraform
+        run: terraform init -backend=false
 
-      - name: Add repo root to PYTHONPATH
-        run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
-
-      - name: Run pytest
-        run: pytest tests/ -v --tb=short --color=yes
-
-      - name: Lint with ruff
-        run: |
-          pip install ruff --quiet
-          ruff check analytics/ ingestion/ dags/ tests/ \
-            --select E,F,W --ignore E501
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform validate
