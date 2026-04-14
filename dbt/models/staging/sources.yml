@@ -2,62 +2,43 @@ version: 2
 
 sources:
   - name: ops_raw
-    description: >
-      Raw layer — data lands here from Dataflow / Pub/Sub ingestion pipelines.
-      Tables are append-only. No transformations are applied at this layer.
-    database: "{{ var('gcp_project') }}"
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
     schema: ops_raw
-    tags: ["raw", "source"]
-
-    freshness:
-      warn_after: {count: 6,  period: hour}
-      error_after: {count: 24, period: hour}
-
+    description: "Raw ingestion layer — append-only event tables partitioned by date"
     tables:
       - name: fleet_events
-        description: Fleet telemetry events — node group health, ECS task changes, ALB health.
-        loaded_at_field: event_ts
+        description: "Raw fleet and operational events"
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 4, period: hour}
         columns:
+          - name: event_key
+            tests: [unique, not_null]
           - name: event_id
-            description: Unique identifier for each event.
-            tests: [not_null, unique]
-          - name: cluster_name
-            tests: [not_null]
-          - name: event_ts
-            tests: [not_null]
-          - name: readiness_score
-            tests:
-              - dbt_utils.accepted_range:
-                  min_value: 0
-                  max_value: 100
-
-      - name: flight_routes
-        description: Real-time flight leg events from the flight-ingest service.
-        loaded_at_field: scheduled_departure_ts
-        columns:
-          - name: flight_id
-            tests: [not_null]
-          - name: route_code
             tests: [not_null]
           - name: event_type
             tests:
               - accepted_values:
-                  values: [DEPARTURE, ARRIVAL, DELAY, CANCEL, DIVERT]
-
-      - name: infra_metrics
-        description: EKS/ECS/ALB/RDS utilisation metrics scraped from Prometheus and CloudWatch.
-        loaded_at_field: scraped_ts
-        columns:
-          - name: metric_id
-            tests: [not_null, unique]
-
-      - name: cost_events
-        description: Cloud cost line items from AWS Cost Explorer and GCP Billing exports.
-        loaded_at_field: cost_date
-        columns:
-          - name: cost_event_id
-            tests: [not_null, unique]
-          - name: cost_usd
+                  values: ['DEPLOY', 'SCALE', 'INCIDENT', 'ALERT', 'HEAL', 'ROLLBACK']
+          - name: environment
             tests:
-              - dbt_utils.accepted_range:
-                  min_value: 0
+              - accepted_values:
+                  values: ['dev', 'staging', 'prod']
+
+      - name: slo_metrics
+        description: "SLO snapshot time-series"
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 6, period: hour}
+        columns:
+          - name: metric_key
+            tests: [unique, not_null]
+
+      - name: cost_billing_export
+        description: "GCP billing export (detailed usage cost)"
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}

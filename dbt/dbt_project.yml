@@ -1,74 +1,52 @@
-name: bigquery_ops_analytics
-version: "1.0.0"
-configuration-version: 2
+name: ops_analytics
+version: '1.0.0'
+config-version: 2
+profile: ops_analytics
 
-profile: bigquery_ops
-
-model-paths: ["models"]
+model-paths:    ["models"]
 analysis-paths: ["analyses"]
-test-paths: ["tests"]
-seed-paths: ["seeds"]
-macro-paths: ["macros"]
+test-paths:     ["tests"]
+seed-paths:     ["seeds"]
+macro-paths:    ["macros"]
 snapshot-paths: ["snapshots"]
 
-target-path: "target"
-clean-targets: ["target", "dbt_packages"]
-
-vars:
-  # Override at runtime: dbt run --vars '{gcp_project: my-project}'
-  gcp_project: "{{ env_var('GCP_PROJECT', 'my-gcp-project') }}"
-  bq_dataset: "{{ env_var('BQ_DATASET', 'ops_analytics') }}"
-  raw_dataset: "ops_raw"
-  anomaly_zscore_threshold: 3.0
-  anomaly_iqr_multiplier: 1.5
-  lookback_days: 30
-  slo_readiness_threshold: 95.0
+target-path: target
+packages-install-path: dbt_packages
 
 models:
-  bigquery_ops_analytics:
-    # Staging: ephemeral or view — cheap, fast, type-safe
+  ops_analytics:
     staging:
       +materialized: view
-      +schema: stg
+      +schema: ops_staging
       +tags: ["staging"]
-      +meta:
-        owner: platform-eng
-        layer: staging
+      +persist_docs:
+        relation: true
+        columns: true
 
-    # Intermediate: incremental where possible
-    intermediate:
-      +materialized: table
-      +schema: int
-      +tags: ["intermediate"]
-      +meta:
-        owner: platform-eng
-        layer: intermediate
-
-    # Marts: partitioned + clustered tables for query efficiency
     marts:
-      +materialized: table
+      +materialized: incremental
+      +schema: ops_marts
       +tags: ["mart"]
-      +meta:
-        owner: platform-eng
-        layer: mart
-      fleet:
-        +partition_by:
-          field: event_date
-          data_type: date
-        +cluster_by: ["cluster_name", "environment"]
-      ops:
-        +partition_by:
-          field: event_date
-          data_type: date
-        +cluster_by: ["route_code", "airline"]
-      cost:
-        +partition_by:
-          field: cost_date
-          data_type: date
-        +cluster_by: ["team", "environment"]
+      +partition_by:
+        field: report_date
+        data_type: date
+        granularity: day
+      +cluster_by: ["environment", "service_name"]
+      +persist_docs:
+        relation: true
+        columns: true
 
-snapshots:
-  bigquery_ops_analytics:
-    +target_schema: snapshots
-    +strategy: timestamp
-    +updated_at: updated_at
+    metrics:
+      +materialized: view
+      +schema: ops_metrics
+      +tags: ["metrics"]
+
+vars:
+  lookback_days: 90
+  anomaly_z_threshold: 3.0
+  slo_window_days: 30
+  cost_anomaly_horizon: 7
+
+seeds:
+  ops_analytics:
+    +schema: ops_seeds

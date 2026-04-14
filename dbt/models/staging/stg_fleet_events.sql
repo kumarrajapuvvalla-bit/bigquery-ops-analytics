@@ -1,64 +1,50 @@
-{{/*
-  stg_fleet_events
-  ────────────────
-  Cleans and type-casts raw fleet telemetry events from ops_raw.fleet_events.
-  One row = one fleet event (node group health tick, ECS task change, ALB health change).
+-- models/staging/stg_fleet_events.sql
+-- Staging model: cleanse and cast raw fleet events
+-- Materialised as VIEW — zero storage cost, re-reads raw on demand
 
-  Source: ops_raw.fleet_events
-  Grain: event_id (unique per event)
-  Materialization: view (re-computed on each query)
-*/}}
-{{ config(materialized='view') }}
+{{ config(
+    materialized='view',
+    schema='ops_staging',
+    tags=['staging', 'fleet']
+) }}
 
-with
-
-source as (
-    select * from {{ source('ops_raw', 'fleet_events') }}
+WITH source AS (
+    SELECT * FROM {{ source('ops_raw', 'fleet_events') }}
+    WHERE event_date BETWEEN
+        DATE_SUB(CURRENT_DATE(), INTERVAL {{ var('lookback_days', 90) }} DAY)
+        AND CURRENT_DATE()
 ),
 
-renamed as (
-    select
-        -- Keys
-        cast(event_id         as string)    as event_id,
-        cast(cluster_name     as string)    as cluster_name,
-        cast(node_group       as string)    as node_group,
-        cast(environment      as string)    as environment,
-
-        -- Dimensions
-        cast(event_type       as string)    as event_type,
-        cast(service_name     as string)    as service_name,
-        cast(aws_region       as string)    as aws_region,
-
-        -- Metrics
-        safe_cast(readiness_score as float64)   as readiness_score,
-        safe_cast(node_count      as int64)     as node_count,
-        safe_cast(healthy_nodes   as int64)     as healthy_nodes,
-        safe_cast(desired_tasks   as int64)     as desired_tasks,
-        safe_cast(running_tasks   as int64)     as running_tasks,
-
-        -- Derived
-        safe_divide(
-            safe_cast(healthy_nodes as float64),
-            nullif(safe_cast(node_count as float64), 0)
-        ) as node_health_ratio,
-
-        safe_divide(
-            safe_cast(running_tasks as float64),
-            nullif(safe_cast(desired_tasks as float64), 0)
-        ) as task_running_ratio,
-
-        -- Timestamps
-        cast(event_ts as timestamp)                  as event_ts,
-        date(cast(event_ts as timestamp))            as event_date,
-        timestamp_trunc(
-            cast(event_ts as timestamp), hour
-        )                                            as event_hour,
-
-        -- Audit
-        current_timestamp()                          as _dbt_loaded_at
-    from source
-    where event_id is not null
-      and event_ts  is not null
+cleansed AS (
+    SELECT
+        event_key,
+        LOWER(TRIM(source_system))                      AS source_system,
+        LOWER(TRIM(environment))                        AS environment,
+        COALESCE(cluster_name, 'unknown')               AS cluster_name,
+        COALESCE(region, 'unknown')                     AS region,
+        event_id,
+        UPPER(TRIM(event_type))                         AS event_type,
+        UPPER(TRIM(COALESCE(event_subtype, 'UNKNOWN'))) AS event_subtype,
+        LOWER(TRIM(COALESCE(service_name, 'unknown')))  AS service_name,
+        event_timestamp,
+        event_date,
+        COALESCE(duration_ms, 0)                        AS duration_ms,
+        UPPER(COALESCE(severity, 'UNKNOWN'))             AS severity,
+        UPPER(COALESCE(status, 'UNKNOWN'))               AS status,
+        COALESCE(message, '')                            AS message,
+        payload_json,
+        slo_name,
+        COALESCE(error_budget_burn, 0.0)                AS error_budget_burn,
+        COALESCE(cost_centre, 'unattributed')           AS cost_centre,
+        COALESCE(squad, 'unattributed')                 AS squad,
+        ingested_at,
+        pipeline_version,
+        source_file
+    FROM source
+    WHERE
+        event_id IS NOT NULL
+        AND event_timestamp IS NOT NULL
+        AND event_type IN ('DEPLOY', 'SCALE', 'INCIDENT', 'ALERT', 'HEAL', 'ROLLBACK')
 )
 
-select * from renamed
+SELECT * FROM cleansed

@@ -1,0 +1,61 @@
+version: 2
+
+metrics:
+  - name: deployment_frequency
+    label: Deployment Frequency
+    model: ref('fleet_health_daily')
+    description: >
+      Average daily deployment count per service, rolling 7-day window.
+      DORA Elite: >= 1 per day. DORA High: 1 per week.
+    calculation_method: average
+    expression: deploy_count
+    timestamp: report_date
+    time_grains: [day, week, month]
+    dimensions: [service_name, environment, squad]
+
+  - name: change_failure_rate
+    label: Change Failure Rate
+    model: ref('fleet_health_daily')
+    description: >
+      Ratio of failed deployments to total deployments.
+      DORA Elite target: < 5%.
+    calculation_method: average
+    expression: change_failure_rate
+    timestamp: report_date
+    time_grains: [day, week, month]
+    dimensions: [service_name, environment, squad]
+
+  - name: mean_time_to_recovery
+    label: Mean Time to Recovery (mins)
+    model: ref('fleet_health_daily')
+    description: >
+      Average minutes from incident detection to service recovery.
+      DORA Elite target: < 60 mins.
+    calculation_method: average
+    expression: mean_time_to_recovery_mins
+    timestamp: report_date
+    time_grains: [day, week, month]
+    dimensions: [service_name, environment, squad]
+
+  - name: slo_compliance_rate
+    label: SLO Compliance Rate
+    model: ref('slo_compliance')
+    description: >
+      Percentage of services meeting their SLO targets in a given period.
+    calculation_method: average
+    expression: "CAST(is_compliant AS FLOAT64)"
+    timestamp: report_week
+    time_grains: [week, month, quarter]
+    dimensions: [service_name, environment, slo_name]
+
+  - name: cost_per_deploy
+    label: Cost per Deployment (USD)
+    model: ref('fleet_health_daily')
+    description: >
+      Average infrastructure cost attributed per deployment event.
+      FinOps efficiency signal.
+    calculation_method: average
+    expression: cost_per_deploy_usd
+    timestamp: report_date
+    time_grains: [day, week, month]
+    dimensions: [service_name, environment, squad]
