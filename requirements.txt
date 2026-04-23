@@ -1,34 +1,22 @@
-# Core
-dbt-bigquery==1.8.0
-google-cloud-bigquery==3.17.0
-google-cloud-bigquery-storage==2.24.0
-google-cloud-storage==2.14.0
-
-# Orchestration
-apache-airflow==2.9.3
-apache-airflow-providers-google==10.14.0
-
-# Data quality
-great-expectations==0.18.0
-
-# Analytics
+# Core analytics
 pandas==2.2.0
 numpy==1.26.4
 scipy==1.12.0
 pyarrow==15.0.0
+
+# BigQuery
+google-cloud-bigquery==3.17.0
+google-cloud-bigquery-storage==2.24.0
+google-cloud-storage==2.14.0
 db-dtypes==1.2.0
 
-# Ingestion
-apache-beam==2.54.0
+# Dashboard API
+requests==2.31.0
 
-# Infrastructure
-google-cloud-monitoring==2.18.0
-google-cloud-logging==3.9.0
-
-# Dev / CI
-sqlfluff==3.3.0
-sqlfluff-templater-dbt==3.3.0
-ruff==0.4.0
-mypy==1.8.0
+# Testing
 pytest==8.0.0
 pytest-cov==4.1.0
+
+# Linting
+ruff==0.4.0
+mypy==1.8.0

@@ -1,0 +1,166 @@
+# =============================================================================
+# .gitlab-ci.yml
+# AI Workload Analytics Pipeline — GitLab CI/CD
+#
+# DAG structure (matching Airflow DAG orchestration pattern):
+#
+#   extract_from_bigquery
+#          │
+#          ▼
+#   cleanse_and_deduplicate
+#          │
+#          ▼
+#   quality_check  ──── FAIL → pipeline halts (dashboards NOT refreshed)
+#          │
+#     ┌────┴────┐
+#     ▼         ▼
+#  anomaly   dashboard
+#   _scan    _refresh
+#
+# The `needs:` keyword enforces explicit DAG dependencies.
+# If quality_check fails, anomaly_scan and dashboard_refresh are never triggered.
+# This ensures dashboard numbers are ALWAYS derived from trustworthy data.
+# =============================================================================
+
+stages:
+  - validate
+  - extract
+  - cleanse
+  - quality_check
+  - analyse
+  - publish
+
+# ── Global defaults ────────────────────────────────────────────────────────────
+
+default:
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet -r requirements.txt
+    - export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+
+variables:
+  GCP_PROJECT_ID:   ${GCP_PROJECT_ID}
+  BQ_DATASET:       ai_workload_telemetry
+  DATA_DIR:         data
+  GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa-key.json
+
+# ── Stage: validate ────────────────────────────────────────────────────────────
+
+lint:
+  stage: validate
+  script:
+    - pip install ruff mypy --quiet
+    - ruff check cleansing/ anomaly_detection/ pipeline/ tests/ --select E,F,W --ignore E501
+    - mypy cleansing/ anomaly_detection/ --ignore-missing-imports
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+
+unit_tests:
+  stage: validate
+  script:
+    - pytest tests/ -v --tb=short --color=yes -x
+  coverage: /TOTAL.*\s(\d+\.?\d*)%/
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+
+# ── Stage: extract ─────────────────────────────────────────────────────────────
+
+extract_from_bigquery:
+  stage: extract
+  needs: ["lint", "unit_tests"]
+  script:
+    - echo "${GCP_SA_KEY}" > /tmp/sa-key.json
+    - |
+      python pipeline/extract.py         --date  "${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}"         --output "${DATA_DIR}/raw/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"
+  artifacts:
+    paths:
+      - data/raw/
+    expire_in: 1 day
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ── Stage: cleanse ─────────────────────────────────────────────────────────────
+
+cleanse_and_deduplicate:
+  stage: cleanse
+  needs: ["extract_from_bigquery"]
+  script:
+    - |
+      python cleansing/cleanse_workload_telemetry.py         --input  "${DATA_DIR}/raw/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"         --output "${DATA_DIR}/clean/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"         --date   "${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}"
+  artifacts:
+    paths:
+      - data/clean/
+    expire_in: 1 day
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ── Stage: quality_check ───────────────────────────────────────────────────────
+# CRITICAL GATE: if this stage fails, downstream stages are NEVER triggered.
+# Dashboard data is never contaminated by bad upstream records.
+
+quality_check:
+  stage: quality_check
+  needs: ["cleanse_and_deduplicate"]
+  script:
+    - |
+      python pipeline/run_quality_checks.py         --input "${DATA_DIR}/clean/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"         --date  "${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}"
+  artifacts:
+    paths:
+      - data/quality_reports/
+    when: always   # upload report even on failure for debugging
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ── Stage: analyse ─────────────────────────────────────────────────────────────
+
+anomaly_scan:
+  stage: analyse
+  needs: ["quality_check"]
+  script:
+    - |
+      python anomaly_detection/detector.py         --input     "${DATA_DIR}/clean/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"         --baseline  "${DATA_DIR}/baselines/latest.parquet"         --output    "${DATA_DIR}/anomalies/jobs_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.parquet"         --report    "${DATA_DIR}/reports/anomaly_report_${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}.json"         --threshold 2.0
+  artifacts:
+    paths:
+      - data/anomalies/
+      - data/reports/
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+baseline_update:
+  stage: analyse
+  needs: ["quality_check"]
+  script:
+    - |
+      python anomaly_detection/baseline_calculator.py         --input       "${DATA_DIR}/clean/"         --output      "${DATA_DIR}/baselines/latest.parquet"         --window-days 30
+  artifacts:
+    paths:
+      - data/baselines/
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# ── Stage: publish ─────────────────────────────────────────────────────────────
+
+dashboard_refresh:
+  stage: publish
+  needs: ["quality_check", "anomaly_scan"]
+  script:
+    - |
+      python pipeline/refresh_dashboards.py         --date "${RUN_DATE:-$(date +%Y-%m-%d -d yesterday)}"
+  environment:
+    name: grafana-prod
+    url: ${GRAFANA_URL}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"

@@ -1,59 +1,76 @@
-# bigquery-ops-analytics
+# ai-workload-ops-analytics
 
-[![CI](https://github.com/kumarrajapuvvalla-bit/bigquery-ops-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/kumarrajapuvvalla-bit/bigquery-ops-analytics/actions/workflows/ci.yml)
-[![dbt](https://github.com/kumarrajapuvvalla-bit/bigquery-ops-analytics/actions/workflows/dbt-test.yml/badge.svg)](https://github.com/kumarrajapuvvalla-bit/bigquery-ops-analytics/actions/workflows/dbt-test.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![dbt](https://img.shields.io/badge/dbt-1.8-orange.svg)](https://docs.getdbt.com)
-[![BigQuery](https://img.shields.io/badge/BigQuery-SQL-4285F4?logo=google-cloud)](https://cloud.google.com/bigquery)
-[![Airflow](https://img.shields.io/badge/Airflow-2.x-017CEE?logo=apache-airflow)](https://airflow.apache.org)
-[![Terraform](https://img.shields.io/badge/Terraform-1.7%2B-7B42BC?logo=terraform)](https://www.terraform.io)
+[![Pipeline](https://img.shields.io/badge/pipeline-GitLab%20CI%2FCD-FC6D26?logo=gitlab)](https://gitlab.com)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
+[![BigQuery](https://img.shields.io/badge/data--store-BigQuery-4285F4?logo=google-cloud)](https://cloud.google.com/bigquery)
+[![Grafana](https://img.shields.io/badge/dashboards-Grafana-F46800?logo=grafana)](https://grafana.com)
+[![Airflow Pattern](https://img.shields.io/badge/orchestration-DAG%20pattern-017CEE?logo=apache-airflow)](https://airflow.apache.org)
 
-> **Production-grade BigQuery analytics platform for fleet and operational intelligence.**  
-> End-to-end coverage: streaming ingestion → dbt transformation → anomaly detection → Looker dashboards → Airflow orchestration — all governed by data contracts, GE quality gates, and CI-enforced SQL linting.
+> **Analytics layer for enterprise AI workload telemetry.**  
+> Hundreds of model training jobs, inference pipelines, and data processing runs generate continuous operational metrics into BigQuery. This platform makes those patterns visible — job health, anomaly detection, workload-type trends, and failure investigation — all surfaced through structured dashboards and a CI-orchestrated DAG pipeline.
+
+---
+
+## The Problem This Solves
+
+Running enterprise AI workloads at scale creates a visibility gap. Individual job failures are logged, but:
+
+- No cross-workload pattern recognition across hundreds of concurrent jobs
+- No trend detection — teams can't see that a workload *class* is degrading over time
+- No anomaly surfacing — jobs running 40–60% longer than baseline go unnoticed
+- No structured investigation path — on-call engineers have raw logs, not answers
+
+This platform closes that gap. It sits on top of BigQuery telemetry that every workload pushes periodically — execution metadata, resource consumption, error logs, performance timestamps — and turns it into actionable operational intelligence.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  INGESTION LAYER                                                             │
-│  Pub/Sub → Dataflow  │  GCS → BQ Transfer  │  Prometheus remote-write      │
-└────────────────────────────────┬────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  RAW LAYER  (ops_raw — BigQuery)                                            │
-│  fleet_events   │  slo_metrics   │  cost_billing_export   │  infra_metrics  │
-│  Partitioned by date · Clustered by source+type · require_partition_filter  │
-└────────────────────────────────┬────────────────────────────────────────────┘
-                                 │  dbt
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  STAGING LAYER  (ops_staging — dbt views)                                   │
-│  stg_fleet_events  │  stg_slo_metrics  │  stg_cost_billing  │  stg_infra   │
-│  Cleanse · Cast · Deduplicate · Validate against sources.yml freshness      │
-└────────────────────────────────┬────────────────────────────────────────────┘
-                                 │  dbt
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  INTERMEDIATE LAYER  (dbt ephemeral / views)                                │
-│  int_fleet_health_scores  │  int_anomaly_candidates  │  int_route_perf      │
-└────────────────────────────────┬────────────────────────────────────────────┘
-                                 │  dbt incremental
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  MARTS LAYER  (ops_marts — dbt incremental tables)                          │
-│  fleet_health_daily │ slo_compliance │ cost_attribution │ anomaly_log       │
-│  ops_kpi_dashboard  │ infra_cost_by_team │ fleet_readiness_daily            │
-└──────────┬──────────────────────┬──────────────────────┬────────────────────┘
-           │                      │                      │
-           ▼                      ▼                      ▼
-  ┌──────────────┐      ┌──────────────────┐    ┌─────────────────────┐
-  │ Looker /     │      │ Anomaly Detection │    │ Cloud Monitoring    │
-  │ LookML       │      │ Z-score + ARIMA+  │    │ Alerts → PagerDuty │
-  │ Dashboards   │      │ (BQ scheduled SQL)│    │ / Slack             │
-  └──────────────┘      └──────────────────┘    └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  AI WORKLOADS (GCP + AWS)                                                │
+│  Model Training  │  Inference Pipelines  │  Data Processing Runs        │
+│  Each job pushes metrics periodically → BigQuery tables                  │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │  Structured telemetry
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  STEP 1 — BigQuery Data Source                                           │
+│  job_metadata  │  resource_allocation_logs  │  infrastructure_events    │
+│  Joined on job_id + timestamp using CTEs + window functions              │
+│  Version-controlled SQL queries in sql/queries/                          │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  STEP 2 — Python Cleansing Layer (pandas)                                │
+│  Deduplication (retry records)  │  NULL imputation (missed collection)   │
+│  Timestamp normalisation (clock skew)  │  Pre-run quality checks        │
+│  cleansing/cleanse_workload_telemetry.py                                 │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  STEP 3 — Anomaly Detection                                              │
+│  Z-score deviation from workload-type baseline (±2σ threshold)           │
+│  Per-workload-class rolling mean + stddev                                │
+│  anomaly_detection/detector.py                                           │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  STEP 4 — Grafana Dashboards (4 views)                                   │
+│  Platform Health  │  Anomaly Flags  │  Workload Trends  │  Drill-Down   │
+│  dashboards/grafana/                                                     │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  STEP 5 — GitLab CI/CD Pipeline (DAG Orchestration)                     │
+│  extract → cleanse → quality_check → anomaly_scan → dashboard_refresh   │
+│  Each stage depends on the prior — bad data never reaches dashboards     │
+│  .gitlab-ci.yml                                                          │
+└──────────────────────────────┴───────────────────────────────────────────┘
 ```
 
 ---
@@ -61,148 +78,108 @@
 ## Repository Map
 
 ```
-bigquery-ops-analytics/
-├── schemas/                       # BigQuery DDL — raw + mart table definitions
-│   ├── ops_raw/                   # fleet_events, slo_metrics, cost_billing_export
-│   └── ops_marts/                 # fleet_health_daily
-├── dbt/                           # dbt Core project
-│   ├── models/
-│   │   ├── staging/               # stg_* views: cleanse, cast, deduplicate
-│   │   ├── intermediate/          # int_* ephemeral/views: reusable business logic
-│   │   ├── marts/                 # Incremental fact tables for dashboards
-│   │   └── metrics/               # dbt semantic layer metric definitions
-│   ├── macros/                    # zscore(), dora_tier(), safe_divide(), etc.
-│   ├── tests/                     # Custom SQL data tests
-│   └── dbt_project.yml
-├── dags/                          # Apache Airflow 2.x DAGs (Cloud Composer)
-│   ├── fleet_analytics_dag.py     # Daily 01:00 UTC: freshness → dbt → anomalies
-│   ├── anomaly_detection_dag.py   # Every 4h: Z-score + ARIMA_PLUS scans
-│   └── cost_rollup_dag.py         # Weekly cost attribution refresh
-├── sql/                           # Standalone BigQuery SQL
-│   ├── queries/                   # Ad-hoc analytics + scheduled queries
-│   └── schemas/                   # Raw DDL reference
-├── analytics/                     # Python analytics utilities
-│   ├── anomaly_detector.py        # Z-score statistical detection engine
-│   ├── trend_calculator.py        # DORA metrics + WoW trend computation
-│   └── dataset_curator.py         # Lineage tracing + schema validation
-├── ingestion/                     # Dataflow + streaming ingestion
-│   └── dataflow_ingest.py
-├── great_expectations/            # GE data quality suites
-│   ├── expectations/
-│   └── great_expectations.yml
-├── looker/                        # Looker LookML views + dashboards
-│   ├── views/
-│   └── dashboards/
-├── terraform/                     # GCP IaC — datasets, IAM, scheduled queries
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-├── tests/                         # Python unit tests
-├── .github/workflows/             # CI: SQL lint, dbt compile/test, GE validation
-├── pyproject.toml
+ai-workload-ops-analytics/
+├── sql/
+│   ├── queries/
+│   │   ├── extract_job_metadata.sql          # Step 1 — core extraction CTE
+│   │   ├── resource_utilisation.sql          # Step 1 — resource allocation join
+│   │   └── infra_event_correlation.sql       # Step 1 — infrastructure event join
+│   └── schemas/
+│       ├── job_metadata.sql                  # DDL for raw telemetry table
+│       ├── resource_allocation_logs.sql      # DDL for resource table
+│       └── infrastructure_events.sql         # DDL for infra event table
+├── cleansing/
+│   ├── cleanse_workload_telemetry.py         # Step 2 — full pandas cleansing layer
+│   └── quality_checks.py                    # Step 2 — pre-pipeline data quality gates
+├── anomaly_detection/
+│   ├── detector.py                          # Step 3 — Z-score anomaly engine
+│   └── baseline_calculator.py              # Step 3 — rolling baseline per workload type
+├── dashboards/
+│   └── grafana/
+│       ├── platform_health.json             # Step 4 — job success/failure/duration
+│       ├── anomaly_flags.json               # Step 4 — deviation alerts
+│       ├── workload_trends.json             # Step 4 — per-class trend analysis
+│       └── drill_down.json                 # Step 4 — investigation view
+├── pipeline/
+│   ├── extract.py                           # Step 5 — BigQuery extraction task
+│   ├── orchestrate.py                       # Step 5 — DAG-style task runner
+│   └── refresh_dashboards.py               # Step 5 — Grafana cache refresh
+├── reports/
+│   └── resource_contention_finding.md      # Step 6 — structured investigation report
+├── tests/
+│   ├── test_cleansing.py
+│   ├── test_anomaly_detector.py
+│   └── test_quality_checks.py
+├── .gitlab-ci.yml                           # GitLab CI/CD DAG pipeline
+├── requirements.txt
 └── docs/
     ├── ARCHITECTURE.md
-    └── RUNBOOK.md
+    └── INVESTIGATION_RUNBOOK.md
 ```
 
 ---
 
-## Key Capabilities
+## Key Findings
 
-| Capability | Stack | Detail |
-|---|---|---|
-| **Streaming Ingestion** | Pub/Sub → Dataflow → BigQuery | Sub-minute latency for fleet events |
-| **Batch Ingestion** | GCS → BQ Transfer Service | Daily cost billing export |
-| **Transformation** | dbt Core 1.8 on BigQuery | 3-layer medallion: staging → intermediate → marts |
-| **Orchestration** | Cloud Composer 2 (Airflow 2.x) | DAG-driven, SLA-monitored, with retry + alerting |
-| **Anomaly Detection** | Z-score SQL + BigQuery ML ARIMA_PLUS | Statistical + ML-based outlier detection |
-| **Data Quality** | Great Expectations 0.18 + dbt tests | Schema, freshness, null %, referential integrity |
-| **Dashboards** | Looker (LookML) + Looker Studio | Fleet health, SLO compliance, FinOps views |
-| **Cost Governance** | FinOps labels + slot reservations | Per-team attribution, `require_partition_filter` |
-| **CI/CD** | GitHub Actions | SQL lint (sqlfluff), dbt compile, GE on every PR |
-| **Infrastructure** | Terraform + `google` provider 5.x | Datasets, IAM, BigQuery scheduled queries |
+The platform identified that a class of **model training jobs** was consistently running **40–60% longer than baseline** during a specific daily window. Anomaly detection flagged the deviation; SQL correlation traced it to a resource contention pattern — a competing workload type was consuming the same GCP compute tier during that window. The finding was packaged as a structured report (SQL + clean dataset + Grafana visualisation + recommendation), presented to platform leadership, and resolved by rescheduling the competing workload. Training times normalised within one week.
+
+See `reports/resource_contention_finding.md` for the full investigation structure.
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/kumarrajapuvvalla-bit/bigquery-ops-analytics
-cd bigquery-ops-analytics
-
-# 1 — Python dependencies
+git clone https://github.com/kumarrajapuvvalla-bit/ai-workload-ops-analytics
+cd ai-workload-ops-analytics
 pip install -r requirements.txt
 
-# 2 — dbt setup
-export GCP_PROJECT_ID=your-project-id
+# Set GCP credentials
 export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json
+export GCP_PROJECT_ID=your-project-id
+export BQ_DATASET=ai_workload_telemetry
 
-cd dbt
-dbt deps                     # install dbt_utils, dbt_expectations, etc.
-dbt debug                    # verify BigQuery connection
-dbt run                      # materialise all models
-dbt test                     # schema + custom SQL tests
-dbt docs generate && dbt docs serve   # browse lineage graph
+# Run the full pipeline locally (mirrors the GitLab CI DAG)
+python pipeline/orchestrate.py --date 2026-04-22
 
-# 3 — Run analytics locally
-cd ..
-python analytics/anomaly_detector.py
-python analytics/trend_calculator.py
-
-# 4 — Airflow (local dev)
-docker-compose -f docker/docker-compose.yml up
+# Run individual steps
+python pipeline/extract.py --date 2026-04-22
+python cleansing/cleanse_workload_telemetry.py --input data/raw/ --output data/clean/
+python anomaly_detection/detector.py --input data/clean/ --threshold 2.0
 ```
 
 ---
 
-## Data Quality Gates
+## Dashboard Views
 
-Every PR runs:
-
-1. **sqlfluff lint** — BigQuery dialect, dbt-templater
-2. **dbt compile** — validates all Jinja + SQL syntax against CI dataset
-3. **dbt test** — schema tests (not_null, unique, accepted_values) + custom SQL tests
-4. **Great Expectations** — `stg_fleet_events` suite: uniqueness, value sets, freshness
-5. **Source freshness** — `dbt source freshness` errors if raw tables are stale
-
----
-
-## DORA Metrics Definitions
-
-| Metric | BigQuery Expression | Elite Target |
+| Dashboard | Engineering Question | Key Metrics |
 |---|---|---|
-| Deployment Frequency | `COUNTIF(event_type='DEPLOY') / days_in_window` | ≥ 1/day |
-| Change Failure Rate | `failed_deploys / total_deploys` | < 5% |
-| Mean Time to Recovery | `AVG(duration_ms) / 60000` (INCIDENT+HEAL) | < 60 min |
-| Lead Time for Change | Computed in `stg_fleet_events` via `commit_to_deploy_hours` | < 1 hour |
+| Platform Health | Is the platform healthy right now? | Job success rate, failure rate, avg duration over time |
+| Anomaly Flags | Which jobs are behaving abnormally? | Jobs >2σ from workload-type baseline, flagged by class |
+| Workload Trends | Which job categories are degrading? | Duration trend by workload type, failure rate WoW |
+| Drill-Down | Why did this specific job fail? | Filter by job_id or time window, event correlation |
 
 ---
 
-## Dataset Lineage
+## Pipeline DAG
 
 ```
-ops_raw.fleet_events        → stg_fleet_events   → int_fleet_health_scores → fleet_health_daily
-ops_raw.slo_metrics         → stg_slo_metrics    → int_anomaly_candidates  → slo_compliance
-ops_raw.cost_billing_export → stg_cost_billing                             → cost_attribution
-ops_raw.infra_metrics       → stg_infra_metrics  → int_route_performance   → fleet_readiness_daily
-
-ops_marts.*  → Looker LookML views
-             → BigQuery scheduled anomaly detection queries
-             → Cloud Monitoring custom metrics → PagerDuty / Slack
+extract_from_bigquery
+        │
+        ▼
+cleanse_and_deduplicate
+        │
+        ▼
+run_quality_checks  ──── FAIL → abort (dashboard not refreshed)
+        │
+        ▼
+run_anomaly_scan
+        │
+        ▼
+refresh_grafana_dashboards
 ```
 
----
-
-## Terraform Infrastructure
-
-```bash
-cd terraform
-terraform init
-terraform plan -var="gcp_project_id=your-project" -var="environment=prod"
-terraform apply
-```
-
-Provisions: BigQuery datasets (`ops_raw`, `ops_staging`, `ops_marts`, `ops_ml`, `ops_ci`), IAM bindings for Looker SA / Composer SA / dbt SA, and BigQuery scheduled queries for anomaly detection (every 4h) and freshness checks (every 15min).
+Each stage in `.gitlab-ci.yml` depends on the previous. If `quality_check` fails, the pipeline halts — dashboard data is never contaminated by bad upstream records.
 
 ---
 
